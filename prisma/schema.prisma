@@ -1,0 +1,433 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── HOSPITALS (Tenants) ───────────────────────────────
+model Hospital {
+  id                  String   @id @default(uuid())
+  name                String
+  code                String   @unique
+  address             String?
+  city                String?
+  state               String?
+  pincode             String?
+  phone               String?
+  email               String?
+  logoUrl             String?
+  modules             Json     @default("{\"opd\":true,\"ipd\":true,\"billing\":true,\"radiology\":true,\"tpa\":true,\"notifications\":true}")
+  subscriptionPlan    String   @default("basic")
+  subscriptionExpires DateTime?
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  users          User[]
+  patients       Patient[]
+  appointments   Appointment[]
+  consultations  Consultation[]
+  admissions     Admission[]
+  beds           Bed[]
+  invoices       Invoice[]
+  payments       Payment[]
+  radiologyOrders RadiologyOrder[]
+  tpaClaims      TpaClaim[]
+  notifications  Notification[]
+  auditLogs      AuditLog[]
+  services       Service[]
+
+  @@map("hospitals")
+}
+
+// ─── USERS ─────────────────────────────────────────────
+model User {
+  id           String   @id @default(uuid())
+  hospitalId   String
+  name         String
+  email        String
+  passwordHash String
+  role         UserRole
+  department   String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  hospital      Hospital       @relation(fields: [hospitalId], references: [id])
+  appointments  Appointment[]
+  consultations Consultation[]
+  admissions    Admission[]
+  auditLogs     AuditLog[]
+  notifications Notification[]
+  payments      Payment[]
+  radiologyOrdersOrdered RadiologyOrder[] @relation("OrderedBy")
+  radiologyStudiesTech   RadiologyStudy[] @relation("Technician")
+  radiologyStudiesRad    RadiologyStudy[] @relation("Radiologist")
+
+  @@unique([hospitalId, email])
+  @@map("users")
+}
+
+enum UserRole {
+  admin
+  doctor
+  receptionist
+  nurse
+  billing
+  tpa
+  radiologist
+  radtech
+}
+
+// ─── PATIENTS ──────────────────────────────────────────
+model Patient {
+  id               String   @id @default(uuid())
+  hospitalId       String
+  uid              String
+  name             String
+  dob              DateTime?
+  gender           String?
+  phone            String?
+  email            String?
+  address          String?
+  bloodGroup       String?
+  emergencyContact Json?
+  insuranceInfo    Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  hospital      Hospital       @relation(fields: [hospitalId], references: [id])
+  appointments  Appointment[]
+  consultations Consultation[]
+  admissions    Admission[]
+  invoices      Invoice[]
+  tpaClaims     TpaClaim[]
+  radiologyOrders RadiologyOrder[]
+
+  @@unique([hospitalId, uid])
+  @@map("patients")
+}
+
+// ─── APPOINTMENTS ──────────────────────────────────────
+model Appointment {
+  id             String            @id @default(uuid())
+  hospitalId     String
+  patientId      String
+  doctorId       String
+  scheduledAt    DateTime
+  type           String            @default("OPD")
+  status         AppointmentStatus @default(scheduled)
+  chiefComplaint String?
+  tokenNumber    Int?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  hospital     Hospital      @relation(fields: [hospitalId], references: [id])
+  patient      Patient       @relation(fields: [patientId], references: [id])
+  doctor       User          @relation(fields: [doctorId], references: [id])
+  consultation Consultation?
+
+  @@map("appointments")
+}
+
+enum AppointmentStatus {
+  scheduled
+  in_progress
+  completed
+  cancelled
+  no_show
+}
+
+// ─── CONSULTATIONS ─────────────────────────────────────
+model Consultation {
+  id            String   @id @default(uuid())
+  hospitalId    String
+  appointmentId String   @unique
+  patientId     String
+  doctorId      String
+  symptoms      String?
+  examination   String?
+  diagnosis     String?
+  notes         String?
+  prescription  Json?
+  vitals        Json?
+  followUpDate  DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  hospital    Hospital    @relation(fields: [hospitalId], references: [id])
+  appointment Appointment @relation(fields: [appointmentId], references: [id])
+  patient     Patient     @relation(fields: [patientId], references: [id])
+  doctor      User        @relation(fields: [doctorId], references: [id])
+
+  @@map("consultations")
+}
+
+// ─── BEDS ──────────────────────────────────────────────
+model Bed {
+  id                 String    @id @default(uuid())
+  hospitalId         String
+  ward               String
+  bedNumber          String
+  type               String    @default("general")
+  status             BedStatus @default(available)
+  currentAdmissionId String?
+
+  hospital   Hospital    @relation(fields: [hospitalId], references: [id])
+  admissions Admission[]
+
+  @@unique([hospitalId, ward, bedNumber])
+  @@map("beds")
+}
+
+enum BedStatus {
+  available
+  occupied
+  maintenance
+}
+
+// ─── ADMISSIONS (IPD) ──────────────────────────────────
+model Admission {
+  id            String          @id @default(uuid())
+  hospitalId    String
+  patientId     String
+  doctorId      String
+  admissionNo   String
+  bedId         String?
+  ward          String?
+  admittedAt    DateTime        @default(now())
+  dischargedAt  DateTime?
+  status        AdmissionStatus @default(admitted)
+  diagnosis     String?
+  notes         Json?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  hospital Hospital @relation(fields: [hospitalId], references: [id])
+  patient  Patient  @relation(fields: [patientId], references: [id])
+  doctor   User     @relation(fields: [doctorId], references: [id])
+  bed      Bed?     @relation(fields: [bedId], references: [id])
+
+  @@unique([hospitalId, admissionNo])
+  @@map("admissions")
+}
+
+enum AdmissionStatus {
+  admitted
+  discharged
+  transferred
+}
+
+// ─── SERVICES (Charge Catalog) ─────────────────────────
+model Service {
+  id         String   @id @default(uuid())
+  hospitalId String
+  category   String
+  code       String
+  name       String
+  unitPrice  Float
+  taxable    Boolean  @default(false)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  hospital     Hospital      @relation(fields: [hospitalId], references: [id])
+  invoiceItems InvoiceItem[]
+
+  @@unique([hospitalId, code])
+  @@map("services")
+}
+
+// ─── INVOICES ──────────────────────────────────────────
+model Invoice {
+  id            String        @id @default(uuid())
+  hospitalId    String
+  patientId     String
+  admissionId   String?
+  appointmentId String?
+  invoiceNo     String
+  status        InvoiceStatus @default(draft)
+  subtotal      Float         @default(0)
+  tax           Float         @default(0)
+  discount      Float         @default(0)
+  total         Float         @default(0)
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  hospital Hospital      @relation(fields: [hospitalId], references: [id])
+  patient  Patient       @relation(fields: [patientId], references: [id])
+  items    InvoiceItem[]
+  payments Payment[]
+  tpaClaim TpaClaim?
+
+  @@unique([hospitalId, invoiceNo])
+  @@map("invoices")
+}
+
+enum InvoiceStatus {
+  draft
+  pending
+  partial
+  paid
+  tpa_pending
+  overdue
+  cancelled
+}
+
+// ─── INVOICE ITEMS ─────────────────────────────────────
+model InvoiceItem {
+  id          String  @id @default(uuid())
+  invoiceId   String
+  serviceId   String?
+  category    String
+  code        String
+  description String
+  quantity    Int     @default(1)
+  unitPrice   Float
+  amount      Float
+  taxable     Boolean @default(false)
+
+  invoice Invoice  @relation(fields: [invoiceId], references: [id])
+  service Service? @relation(fields: [serviceId], references: [id])
+
+  @@map("invoice_items")
+}
+
+// ─── PAYMENTS ──────────────────────────────────────────
+model Payment {
+  id          String   @id @default(uuid())
+  invoiceId   String
+  hospitalId  String
+  amount      Float
+  mode        String
+  referenceNo String?
+  paidAt      DateTime @default(now())
+  receivedBy  String
+
+  invoice  Invoice  @relation(fields: [invoiceId], references: [id])
+  hospital Hospital @relation(fields: [hospitalId], references: [id])
+  user     User     @relation(fields: [receivedBy], references: [id])
+
+  @@map("payments")
+}
+
+// ─── RADIOLOGY ORDERS ──────────────────────────────────
+model RadiologyOrder {
+  id            String              @id @default(uuid())
+  hospitalId    String
+  patientId     String
+  orderedById   String
+  orderNo       String
+  modality      String
+  studyType     String
+  priority      String              @default("routine")
+  status        RadiologyOrderStatus @default(pending)
+  clinicalNotes String?
+  source        String?
+  sourceId      String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  hospital  Hospital        @relation(fields: [hospitalId], references: [id])
+  patient   Patient         @relation(fields: [patientId], references: [id])
+  orderedBy User            @relation("OrderedBy", fields: [orderedById], references: [id])
+  study     RadiologyStudy?
+
+  @@unique([hospitalId, orderNo])
+  @@map("radiology_orders")
+}
+
+enum RadiologyOrderStatus {
+  pending
+  in_progress
+  completed
+  cancelled
+}
+
+// ─── RADIOLOGY STUDIES ─────────────────────────────────
+model RadiologyStudy {
+  id            String   @id @default(uuid())
+  orderId       String   @unique
+  hospitalId    String
+  technicianId  String?
+  radiologistId String?
+  report        String?
+  images        Json?
+  verifiedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  order       RadiologyOrder @relation(fields: [orderId], references: [id])
+  technician  User?          @relation("Technician", fields: [technicianId], references: [id])
+  radiologist User?          @relation("Radiologist", fields: [radiologistId], references: [id])
+
+  @@map("radiology_studies")
+}
+
+// ─── TPA CLAIMS ────────────────────────────────────────
+model TpaClaim {
+  id               String        @id @default(uuid())
+  hospitalId       String
+  invoiceId        String        @unique
+  patientId        String
+  insuranceCompany String
+  policyNumber     String?
+  claimNumber      String?
+  claimedAmount    Float
+  approvedAmount   Float?
+  status           TpaClaimStatus @default(pending)
+  notes            String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  hospital Hospital @relation(fields: [hospitalId], references: [id])
+  invoice  Invoice  @relation(fields: [invoiceId], references: [id])
+  patient  Patient  @relation(fields: [patientId], references: [id])
+
+  @@map("tpa_claims")
+}
+
+enum TpaClaimStatus {
+  pending
+  submitted
+  approved
+  rejected
+  partial
+}
+
+// ─── NOTIFICATIONS ─────────────────────────────────────
+model Notification {
+  id         String   @id @default(uuid())
+  hospitalId String
+  userId     String?
+  title      String
+  message    String
+  type       String   @default("info")
+  readAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  hospital Hospital @relation(fields: [hospitalId], references: [id])
+  user     User?    @relation(fields: [userId], references: [id])
+
+  @@map("notifications")
+}
+
+// ─── AUDIT LOGS ────────────────────────────────────────
+model AuditLog {
+  id         String   @id @default(uuid())
+  hospitalId String
+  userId     String
+  action     String
+  module     String
+  recordId   String?
+  details    Json?
+  createdAt  DateTime @default(now())
+
+  hospital Hospital @relation(fields: [hospitalId], references: [id])
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
